@@ -1397,6 +1397,7 @@ async function createHarness(t: test.TestContext, options: HarnessOptions = {}):
         requiredApprovingReviewCount: options.requireExternalApproval ? 1 : 0,
         requireCodeOwnerReviews: false,
         dismissStaleApprovals: options.dismissStaleApprovals ?? false,
+        requiredTeamReviews: [],
       };
     },
     async mergeSquash(_project: Project, number: number, expectedHead: string) {
@@ -1895,7 +1896,7 @@ test("incomplete v11 Objective scopes remain readable and reconcile after upgrad
   try {
     database.prepare("UPDATE objectives SET issue_scopes_json = ? WHERE id = ?")
       .run(JSON.stringify([{ projectSlug: "api", query: { labels: ["feature"] } }]), objective.id);
-    database.exec("DROP INDEX task_runtime_pending_cleanup; ALTER TABLE task_runtime DROP COLUMN cleanup_completed_at; DROP TRIGGER change_set_slug_immutable; DROP TRIGGER change_set_sources_exclusive; DROP INDEX change_sets_unique_slug; ALTER TABLE work_items DROP COLUMN slug; DROP TRIGGER change_set_delivery_immutable; ALTER TABLE work_items DROP COLUMN target_branch; ALTER TABLE work_items DROP COLUMN delivery; ALTER TABLE task_runtime DROP COLUMN window_id; ALTER TABLE work_item_runtime DROP COLUMN github_checks; ALTER TABLE work_item_runtime DROP COLUMN github_checks_at; ALTER TABLE work_item_runtime DROP COLUMN github_review_decision; UPDATE schema_meta SET version = 11;");
+    database.exec("DROP INDEX decisions_one_pending_per_subject_kind; CREATE UNIQUE INDEX decisions_one_pending_per_subject ON decisions(subject_type, subject_id) WHERE state = 'pending'; ALTER TABLE relations DROP COLUMN consumed_reviewed_commit; ALTER TABLE relations DROP COLUMN gate; ALTER TABLE work_item_runtime DROP COLUMN github_team_review_pending; DROP INDEX task_runtime_pending_cleanup; ALTER TABLE task_runtime DROP COLUMN cleanup_completed_at; DROP TRIGGER change_set_slug_immutable; DROP TRIGGER change_set_sources_exclusive; DROP INDEX change_sets_unique_slug; ALTER TABLE work_items DROP COLUMN slug; DROP TRIGGER change_set_delivery_immutable; ALTER TABLE work_items DROP COLUMN target_branch; ALTER TABLE work_items DROP COLUMN delivery; ALTER TABLE task_runtime DROP COLUMN window_id; ALTER TABLE work_item_runtime DROP COLUMN github_checks; ALTER TABLE work_item_runtime DROP COLUMN github_checks_at; ALTER TABLE work_item_runtime DROP COLUMN github_review_decision; UPDATE schema_meta SET version = 11;");
   } finally { database.close(); }
   const restarted = harness.restartMain();
   assert.deepEqual((await restarted.statusSnapshot()).objectives[0]?.issueScopes, [
@@ -4157,7 +4158,7 @@ test("new Main consumes a healthy worker result after a crash without restarting
       async createPullRequest() { throw new Error("not reached"); },
       async pullRequest() { throw new Error("not reached"); },
       async syncPullRequestContent() {},
-      async branchProtection() { return { known: true, requiredStatusChecks: [], requiredApprovingReviewCount: 0, requireCodeOwnerReviews: false, dismissStaleApprovals: false }; },
+      async branchProtection() { return { known: true, requiredStatusChecks: [], requiredApprovingReviewCount: 0, requireCodeOwnerReviews: false, dismissStaleApprovals: false, requiredTeamReviews: [] }; },
       async hasWritePermission() { return false; },
       async mergeSquash() {},
     },

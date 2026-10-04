@@ -461,6 +461,7 @@ test("branch protection combines classic settings with active rulesets", async (
     requiredApprovingReviewCount: 3,
     requireCodeOwnerReviews: true,
     dismissStaleApprovals: true,
+    requiredTeamReviews: [],
   });
 });
 
@@ -479,6 +480,7 @@ test("an unprotected branch is known when classic protection returns 404 and no 
     requiredApprovingReviewCount: 0,
     requireCodeOwnerReviews: false,
     dismissStaleApprovals: false,
+    requiredTeamReviews: [],
   });
   assert.equal(commands.calls[2]?.args[1], "repos/acme/widget/rules/branches/main");
 });
@@ -504,6 +506,7 @@ test("branch rulesets remain authoritative when classic protection returns 404",
     requiredApprovingReviewCount: 0,
     requireCodeOwnerReviews: false,
     dismissStaleApprovals: false,
+    requiredTeamReviews: [],
   });
 });
 
@@ -522,6 +525,7 @@ test("non_fast_forward ruleset policy is supported without affecting merge readi
     requiredApprovingReviewCount: 0,
     requireCodeOwnerReviews: false,
     dismissStaleApprovals: false,
+    requiredTeamReviews: [],
   });
 });
 

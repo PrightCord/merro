@@ -27,10 +27,19 @@ function transitiveDownstreamCount(id: string, relations: readonly Relation[]): 
   return seen.size;
 }
 
-function requirementsSatisfied(item: ChangeSet, byId: ReadonlyMap<string, ChangeSet>, relations: readonly Relation[]): boolean {
+function requirementsSatisfied(
+  item: ChangeSet,
+  byId: ReadonlyMap<string, ChangeSet>,
+  relations: readonly Relation[],
+  reviewedIds: ReadonlySet<string>,
+): boolean {
   for (const relation of relations) {
     if (relation.kind !== "Requires" || relation.from !== item.id) continue;
-    if (byId.get(relation.to)?.state !== "Done") return false;
+    const prerequisite = byId.get(relation.to);
+    if (!prerequisite) return false;
+    if ((relation.gate ?? "done") === "reviewed") {
+      if (prerequisite.state !== "Done" && !reviewedIds.has(prerequisite.id)) return false;
+    } else if (prerequisite.state !== "Done") return false;
   }
   return true;
 }
@@ -55,11 +64,12 @@ export function schedule(input: SchedulingInput): ScheduleResult {
   const activeIds = input.activeChangeSetIds
     ? new Set(input.activeChangeSetIds)
     : new Set(input.changeSets.filter((item) => item.state === "Implementing" || item.state === "Reviewing").map((item) => item.id));
+  const reviewedIds = new Set(input.reviewedChangeSetIds ?? []);
 
   const candidates = input.changeSets
     .filter((item) => item.state === "Ready" || item.state === "Implementing" || item.state === "Reviewing")
     .filter((item) => !activeIds.has(item.id))
-    .filter((item) => requirementsSatisfied(item, byId, relations))
+    .filter((item) => requirementsSatisfied(item, byId, relations, reviewedIds))
     .filter((item) => !conflictsWithAny(item.id, activeIds, relations))
     .sort((left, right) => {
       const priority = priorityRank(left.priority) - priorityRank(right.priority);

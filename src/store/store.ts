@@ -22,7 +22,7 @@ import { changeName, issueNumbers, semanticSlug } from "../domain/names.js";
 import { effectiveRelations, normalizeRelation } from "../domain/relations.js";
 import { assertChangeSetTransition } from "../domain/change-set.js";
 import type { FinalSummaryRecord, ObjectiveSettingsRecord, ProjectSettingsRecord, TaskRuntimeRecord, ChangeSetRuntimeRecord } from "./model.js";
-import { MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_16, MIGRATION_17, SCHEMA_VERSION } from "./schema.js";
+import { MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_16, MIGRATION_17, MIGRATION_19, SCHEMA_VERSION } from "./schema.js";
 
 import { migratePublicationStates } from "./publication-migration.js";
 import { migrateLocalMergeState } from "./local-merge-migration.js";
@@ -365,6 +365,15 @@ export class MerroStore {
     if (version < 18) {
       migrateLocalMergeState(this.#db);
       version = 18;
+    }
+    if (version < 19) {
+      this.#db.exec("BEGIN IMMEDIATE");
+      try {
+        this.#db.exec(MIGRATION_19);
+        this.#db.prepare("UPDATE schema_meta SET version = 19").run();
+        this.#db.exec("COMMIT");
+        version = 19;
+      } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
     }
     if (version !== SCHEMA_VERSION) {
       throw new Error(`unsupported Merro schema version ${version}; expected ${SCHEMA_VERSION}`);

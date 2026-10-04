@@ -27,6 +27,7 @@ export type TaskRole = "implement" | "review";
 export type TaskOutcome = "success" | "failed" | "cancelled" | "pass" | "reject";
 export type RelationKind = "Requires" | "Conflicts";
 export type RelationConfidence = "explicit" | "high";
+export type RequiresGate = "reviewed" | "done";
 export type ReviewRoundLimit = number | "unlimited";
 export type DecisionState = "pending" | "approved" | "rejected" | "resolved";
 
@@ -116,11 +117,14 @@ export interface Relation {
   confidence: RelationConfidence;
   rationale: string;
   evidence: string;
+  gate?: RequiresGate;
+  consumedReviewedCommit?: string | null;
 }
 
 export interface SchedulingInput {
   changeSets: readonly ChangeSet[];
   relations: readonly Relation[];
+  reviewedChangeSetIds?: readonly string[];
   activeTaskCount: number;
   maxConcurrentTasks: number | "unlimited";
   activeChangeSetIds?: readonly string[];

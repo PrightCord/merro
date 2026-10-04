@@ -352,26 +352,26 @@ export class WorkerRuntime {
 
       const existingSession = await this.#sessionExists(session, input.project);
       const sessionMarkers = existingSession ? [] : [
-        ";", "set-option", "-t", session, "@merro_project", input.project.slug,
-        ";", "set-option", "-t", session, "@merro_owner", owner,
-        ";", "set-environment", "-t", session, "MERRO_PROJECT", input.project.slug,
-        ";", "set-environment", "-t", session, "MERRO_OWNER", owner,
+        ";", "set-option", "-t", `=${session}`, "@merro_project", input.project.slug,
+        ";", "set-option", "-t", `=${session}`, "@merro_owner", owner,
+        ";", "set-environment", "-t", `=${session}`, "MERRO_PROJECT", input.project.slug,
+        ";", "set-environment", "-t", `=${session}`, "MERRO_OWNER", owner,
       ];
       windowLaunchAttempted = true;
       // The first Task is the session's first window. Mark ownership in the same server command queue.
       const paneResult = await this.#commands.run("tmux", [
         existingSession ? "new-window" : "new-session", "-d", "-P", "-F", "#{pane_id}",
-        existingSession ? "-t" : "-s", session,
+        existingSession ? "-t" : "-s", existingSession ? `=${session}` : session,
         "-n", window, "-c", sandbox === "none" ? resolve(input.clonePath) : input.project.path,
         launchCommand,
         ...sessionMarkers,
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "automatic-rename", "off",
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "allow-rename", "off",
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "remain-on-exit", sandbox === "none" ? "on" : "off",
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "@merro_task_id", input.taskId,
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "@merro_work_item_id", input.changeSetId,
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "@merro_clone_path", resolve(input.clonePath),
-        ";", "set-option", "-w", "-t", `${session}:${window}`, "@merro_runtime_kind", sandbox === "docker" ? "docker" : "host",
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "automatic-rename", "off",
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "allow-rename", "off",
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "remain-on-exit", sandbox === "none" ? "on" : "off",
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "@merro_task_id", input.taskId,
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "@merro_work_item_id", input.changeSetId,
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "@merro_clone_path", resolve(input.clonePath),
+        ";", "set-option", "-w", "-t", `=${session}:${window}`, "@merro_runtime_kind", sandbox === "docker" ? "docker" : "host",
       ]);
       paneId = paneResult.stdout.trim() || null;
       if (!paneId || !/^%\d+$/.test(paneId)) throw new Error("tmux did not return an exact worker pane identity.");
@@ -420,7 +420,7 @@ export class WorkerRuntime {
       const partial = { ...plan, paneId, windowId, containerId, processPid, processStartedAt };
       try {
         if (windowLaunchAttempted) {
-          const target = paneId ?? `${session}:${window}`;
+          const target = paneId ?? `=${session}:${window}`;
           await this.#commands.run("tmux", ["kill-window", "-t", target]).catch(async (killError: unknown) => {
             if (missingTmuxTarget(killError)) return;
             try {
@@ -465,7 +465,7 @@ export class WorkerRuntime {
     let dockerPane = false;
     for (const session of sessions) {
       if (!await this.#sessionExists(session, project, recordedRuntimes)) continue;
-      const panes = (await this.#commands.run("tmux", ["list-panes", "-s", "-t", session, "-F", "#{pane_id} #{pane_dead}"])).stdout.trim();
+      const panes = (await this.#commands.run("tmux", ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_id} #{pane_dead}"])).stdout.trim();
       for (const row of panes ? panes.split("\n") : []) {
         const [paneId, dead] = row.split(" ");
         if (!paneId || !/^%\d+$/.test(paneId) || !/^[01]$/.test(dead ?? "")) throw new Error("tmux returned invalid pane inventory");
@@ -806,15 +806,15 @@ export class WorkerRuntime {
   async #sessionExists(session: string, project: Project, recordedRuntimes: readonly TaskRuntimeRecord[] = []): Promise<boolean> {
     const owner = await this.#workspaceOwner();
     try {
-      await this.#commands.run("tmux", ["has-session", "-t", session]);
+      await this.#commands.run("tmux", ["has-session", "-t", `=${session}`]);
     } catch (error) {
       if (missingTmuxTarget(error)) return false;
       throw error;
     }
 
     const [storedProject, storedOwner] = await Promise.all([
-      this.#commands.run("tmux", ["show-option", "-qv", "-t", session, "@merro_project"]),
-      this.#commands.run("tmux", ["show-option", "-qv", "-t", session, "@merro_owner"]),
+      this.#commands.run("tmux", ["show-option", "-qv", "-t", `=${session}`, "@merro_project"]),
+      this.#commands.run("tmux", ["show-option", "-qv", "-t", `=${session}`, "@merro_owner"]),
     ]);
     if (storedProject.stdout.trim() === project.slug) {
       if (storedOwner.stdout.trim() === owner) return true;
@@ -823,7 +823,7 @@ export class WorkerRuntime {
           if (record.tmuxSession !== session || !record.paneId
             || (!record.containerId && (record.runtimeKind !== "host" || record.processPid === null || record.processStartedAt === null))) continue;
           try {
-            const pane = await this.#commands.run("tmux", ["display-message", "-p", "-t", `${session}:${record.tmuxWindow}`, "#{pane_id}"]);
+            const pane = await this.#commands.run("tmux", ["display-message", "-p", "-t", `=${session}:${record.tmuxWindow}`, "#{pane_id}"]);
             if (pane.stdout.trim() !== record.paneId) continue;
             const presence = await this.inspect(record, record.taskId);
             if (!presence.alive || !presence.identityMatches) continue;
@@ -832,8 +832,8 @@ export class WorkerRuntime {
             throw error;
           }
           // Migrate namespace metadata only after proving ownership. Task status and processes are untouched.
-          await this.#commands.run("tmux", ["set-option", "-t", session, "@merro_owner", owner,
-            ";", "set-environment", "-t", session, "MERRO_OWNER", owner]);
+          await this.#commands.run("tmux", ["set-option", "-t", `=${session}`, "@merro_owner", owner,
+            ";", "set-environment", "-t", `=${session}`, "MERRO_OWNER", owner]);
           return true;
         }
       }

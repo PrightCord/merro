@@ -24,7 +24,7 @@ test("v16 changes retain PR delivery and recorded clone paths; new local targets
   original.createChangeSet({ id: "legacy", projectSlug: "p", slug: "legacy", issues: [{ projectSlug: "p", number: 1 }], generation: 1, state: "Reviewed", priority: "normal", readySince: null, blockedReason: null, blockedResumeState: null });
   original.close();
   const legacy = new DatabaseSync(path);
-  legacy.exec("UPDATE work_item_runtime SET clone_path = '/tmp/old:clone', branch_name = 'fix/legacy' WHERE work_item_id = 'legacy'; DROP TRIGGER change_set_delivery_immutable; ALTER TABLE work_items DROP COLUMN target_branch; ALTER TABLE work_items DROP COLUMN delivery; UPDATE schema_meta SET version = 16;");
+  legacy.exec("UPDATE work_item_runtime SET clone_path = '/tmp/old:clone', branch_name = 'fix/legacy' WHERE work_item_id = 'legacy'; DROP INDEX decisions_one_pending_per_subject_kind; CREATE UNIQUE INDEX decisions_one_pending_per_subject ON decisions(subject_type, subject_id) WHERE state = 'pending'; ALTER TABLE relations DROP COLUMN consumed_reviewed_commit; ALTER TABLE relations DROP COLUMN gate; ALTER TABLE work_item_runtime DROP COLUMN github_team_review_pending; DROP TRIGGER change_set_delivery_immutable; ALTER TABLE work_items DROP COLUMN target_branch; ALTER TABLE work_items DROP COLUMN delivery; UPDATE schema_meta SET version = 16;");
   legacy.close();
   const migrated = new MerroStore(path);
   try {
@@ -40,6 +40,35 @@ test("v16 changes retain PR delivery and recorded clone paths; new local targets
       assert.throws(() => database.exec("UPDATE work_items SET delivery = 'pr' WHERE id = 'local'"), /immutable/);
       assert.throws(() => database.exec("UPDATE work_items SET target_branch = 'other' WHERE id = 'local'"), /immutable/);
     } finally { database.close(); }
+  } finally { migrated.close(); }
+});
+
+test("v18 migration adds reviewed-dependency metadata and separates pending Decision kinds", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "merro-v19-migration-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.db");
+  const original = new MerroStore(path);
+  original.createProject({ slug: "p", path: "/tmp/p", baseRemote: "origin", pushRemote: "origin", defaultBranch: "main" });
+  original.createChangeSet({ id: "change", projectSlug: "p", slug: "change", issues: [], generation: 1, state: "Ready", priority: "normal", readySince: null, blockedReason: null, blockedResumeState: null });
+  original.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("DROP INDEX decisions_one_pending_per_subject_kind; CREATE UNIQUE INDEX decisions_one_pending_per_subject ON decisions(subject_type, subject_id) WHERE state = 'pending'; ALTER TABLE relations DROP COLUMN consumed_reviewed_commit; ALTER TABLE relations DROP COLUMN gate; ALTER TABLE work_item_runtime DROP COLUMN github_team_review_pending; UPDATE schema_meta SET version = 18;");
+  legacy.close();
+
+  const migrated = new MerroStore(path);
+  try {
+    const database = new DatabaseSync(path);
+    try {
+      assert.equal(database.prepare("SELECT version FROM schema_meta").get()?.version, SCHEMA_VERSION);
+      assert.equal(database.prepare("SELECT github_team_review_pending FROM work_item_runtime WHERE work_item_id = 'change'").get()?.github_team_review_pending, 0);
+      assert.deepEqual(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'decisions_one_pending%'").all().map((row) => String(row.name)), [
+        "decisions_one_pending_per_subject_kind",
+      ]);
+    } finally { database.close(); }
+    migrated.createDecision({ id: "merge", subjectType: "ChangeSet", subjectId: "change", kind: "merge", payload: {} });
+    migrated.createDecision({ id: "team-review", subjectType: "ChangeSet", subjectId: "change", kind: "team_review", payload: {} });
+    assert.deepEqual(migrated.pendingDecisions().map((decision) => decision.kind), ["merge", "team_review"]);
   } finally { migrated.close(); }
 });
 

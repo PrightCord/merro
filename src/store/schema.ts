@@ -1,4 +1,14 @@
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
+
+export const MIGRATION_19 = `
+ALTER TABLE relations ADD COLUMN gate TEXT CHECK (gate IN ('reviewed','done'));
+ALTER TABLE relations ADD COLUMN consumed_reviewed_commit TEXT;
+ALTER TABLE work_item_runtime ADD COLUMN github_team_review_pending INTEGER NOT NULL DEFAULT 0 CHECK (github_team_review_pending IN (0, 1));
+DROP INDEX IF EXISTS decisions_one_pending_per_subject;
+CREATE UNIQUE INDEX IF NOT EXISTS decisions_one_pending_per_subject_kind
+ON decisions(subject_type, subject_id, kind)
+WHERE state = 'pending';
+`;
 
 export const MIGRATION_17 = `
 ALTER TABLE work_items ADD COLUMN delivery TEXT NOT NULL DEFAULT 'pr' CHECK (delivery IN ('local','pr'));
@@ -166,8 +176,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   resolved_at TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS decisions_one_pending_per_subject
-ON decisions(subject_type, subject_id)
+CREATE UNIQUE INDEX IF NOT EXISTS decisions_one_pending_per_subject_kind
+ON decisions(subject_type, subject_id, kind)
 WHERE state = 'pending';
 
 CREATE TABLE IF NOT EXISTS event_log (

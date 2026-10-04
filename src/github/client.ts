@@ -53,6 +53,12 @@ export interface GitHubCheck {
   detailsUrl: string | null;
 }
 
+export interface RequiredTeamReviewRequirement {
+  teamId: number;
+  minimumApprovals: number;
+  filePatterns: string[];
+}
+
 export interface GitHubPullRequest {
   number: number;
   title: string;
@@ -71,6 +77,7 @@ export interface GitHubPullRequest {
   reviewDecision: string | null;
   reviews: GitHubReview[];
   checks: GitHubCheck[];
+  changedFiles?: string[];
 }
 
 export interface BranchProtection {
@@ -79,6 +86,7 @@ export interface BranchProtection {
   requiredApprovingReviewCount: number;
   requireCodeOwnerReviews: boolean;
   dismissStaleApprovals: boolean;
+  requiredTeamReviews: RequiredTeamReviewRequirement[];
 }
 
 export interface UnknownBranchProtection {
@@ -246,6 +254,10 @@ function parsePullRequest(value: unknown): GitHubPullRequest {
     reviewDecision: nullableString(row.reviewDecision),
     reviews,
     checks,
+    ...(Array.isArray(row.files) ? { changedFiles: row.files.flatMap((file) => {
+      if (typeof file !== "object" || file === null || typeof (file as Record<string, unknown>).path !== "string") return [];
+      return [(file as Record<string, unknown>).path as string];
+    }) } : {}),
   };
 }
 
@@ -415,7 +427,7 @@ export class GitHubClient {
     const result = await this.#read([
       "pr", "list", "--repo", base.nameWithOwner, "--state", "all",
       "--head", `${owner}:${branchName}`,
-      "--json", "number,title,body,url,state,isDraft,mergedAt,mergeCommit,mergeable,headRefName,baseRefName,headRefOid,baseRefOid,author,reviewDecision,reviews,statusCheckRollup",
+      "--json", "number,title,body,url,state,isDraft,mergedAt,mergeCommit,mergeable,headRefName,baseRefName,headRefOid,baseRefOid,author,reviewDecision,reviews,statusCheckRollup,files",
       "--limit", "100",
     ], { cwd: project.path });
     const value = parseJson(result.stdout, "gh pr list");
@@ -428,7 +440,7 @@ export class GitHubClient {
     const repository = await this.repository(project.baseRemote);
     const result = await this.#read([
       "pr", "view", String(number), "--repo", repository.nameWithOwner,
-      "--json", "number,title,body,url,state,isDraft,mergedAt,mergeCommit,mergeable,headRefName,baseRefName,headRefOid,baseRefOid,author,reviewDecision,reviews,statusCheckRollup",
+      "--json", "number,title,body,url,state,isDraft,mergedAt,mergeCommit,mergeable,headRefName,baseRefName,headRefOid,baseRefOid,author,reviewDecision,reviews,statusCheckRollup,files",
     ], { cwd: project.path });
     return parsePullRequest(parseJson(result.stdout, "gh pr view"));
   }
@@ -614,6 +626,7 @@ export class GitHubClient {
       let requiredApprovingReviewCount = classicApprovals;
       let requireCodeOwnerReviews = classicCodeOwners;
       let dismissStale = dismissStaleApprovals;
+      const requiredTeamReviews: RequiredTeamReviewRequirement[] = [];
       for (const value of rules) {
         const rule = object(value, "gh api branch rule");
         const parameters = typeof rule.parameters === "object" && rule.parameters !== null
@@ -630,7 +643,7 @@ export class GitHubClient {
         } else if (rule.type === "pull_request") {
           rejectUnknownRuleParameters(parameters, new Set([
             "dismiss_stale_reviews_on_push", "require_code_owner_review", "require_last_push_approval",
-            "required_approving_review_count", "required_review_thread_resolution",
+            "required_approving_review_count", "required_review_thread_resolution", "required_reviewers",
           ]));
           if (ruleParameterEnabled(parameters, "require_last_push_approval")) throw new Error("ruleset requires unsupported last-push approval");
           if (ruleParameterEnabled(parameters, "required_review_thread_resolution")) throw new Error("ruleset requires unsupported review-thread resolution");
@@ -643,6 +656,25 @@ export class GitHubClient {
           requireCodeOwnerReviews ||= parameters.require_code_owner_review === true
             || parameters.require_code_owner_reviews === true;
           dismissStale ||= parameters.dismiss_stale_reviews_on_push === true;
+          if (parameters.required_reviewers !== undefined) {
+            if (!Array.isArray(parameters.required_reviewers)) throw new Error("ruleset has invalid required_reviewers parameter");
+            for (const value of parameters.required_reviewers) {
+              const requirement = object(value, "ruleset pull_request.required_reviewers entry");
+              const reviewer = object(requirement.reviewer, "ruleset required reviewer");
+              if (reviewer.type !== "Team" || !Number.isSafeInteger(reviewer.id) || Number(reviewer.id) < 1) {
+                throw new Error("ruleset required reviewer must identify a team by numeric id");
+              }
+              if (!Number.isSafeInteger(requirement.minimum_approvals) || Number(requirement.minimum_approvals) < 0) {
+                throw new Error("ruleset required reviewer has invalid minimum_approvals");
+              }
+              if (requirement.file_patterns !== undefined
+                && (!Array.isArray(requirement.file_patterns) || requirement.file_patterns.some((pattern) => typeof pattern !== "string" || !pattern.trim()))) {
+                throw new Error("ruleset required reviewer has invalid file_patterns");
+              }
+              requiredTeamReviews.push({ teamId: Number(reviewer.id), minimumApprovals: Number(requirement.minimum_approvals),
+                filePatterns: Array.isArray(requirement.file_patterns) ? requirement.file_patterns as string[] : [] });
+            }
+          }
         } else if (rule.type === "required_reviewers" || rule.type === "required_review_thread_resolution") {
           throw new Error(`ruleset contains unsupported merge requirement '${String(rule.type)}'`);
         } else if (rule.type !== "creation" && rule.type !== "deletion" && rule.type !== "non_fast_forward") {
@@ -655,6 +687,7 @@ export class GitHubClient {
         requiredApprovingReviewCount,
         requireCodeOwnerReviews,
         dismissStaleApprovals: dismissStale,
+        requiredTeamReviews,
       };
     } catch (error) {
       return { known: false, reason: error instanceof Error ? error.message : String(error), retryable: false };
